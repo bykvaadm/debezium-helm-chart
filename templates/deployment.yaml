@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "debezium.fullname" . }}
+  labels:
+    {{- include "debezium.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "debezium.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson .Values | sha256sum }}
+        prometheus.io/scrape: 'true'
+        prometheus.io/path: '/'
+        prometheus.io/port: "{{ .Values.init_jmx.port }}"
+      labels:
+        {{- include "debezium.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+      - emptyDir: {}
+        name: opt-prometheus
+      - name: config
+        configMap:
+          name: {{ include "debezium.fullname" . }}
+          defaultMode: 0744
+      initContainers:
+      - name: "{{ .Chart.Name }}-kafka"
+        image: "{{ .Values.init_kafka.image.repository }}:{{ .Values.init_kafka.image.tag }}"
+        volumeMounts:
+        - mountPath: /opt/debezium
+          name: config
+        command: ["/bin/sh", "-c", "/opt/debezium/kafka.sh"]
+        env:
+        {{- range $key, $value := .Values.debezium.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: CONFIG_STORAGE_TOPIC
+          value: {{ include "debezium.ConfigStorageTopic" . }}
+        - name: OFFSET_STORAGE_TOPIC
+          value: {{ include "debezium.OffsetStorageTopic" . }}
+        - name: STATUS_STORAGE_TOPIC
+          value: {{ include "debezium.StatusStorageTopic" . }}
+      - name: "{{ .Chart.Name }}-jmx"
+        command:
+        - wget
+        - --quiet
+        - --no-check-certificate
+        - --output-document
+        - /opt/prometheus/jmx_exporter_javaagent.jar
+        - https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/{{ .Values.init_jmx.version }}/jmx_prometheus_javaagent-{{ .Values.init_jmx.version }}.jar
+        image: "{{ .Values.init_jmx.image.repository }}:{{ .Values.init_jmx.image.tag }}"
+        imagePullPolicy: Always
+        volumeMounts:
+        - mountPath: /opt/prometheus
+          name: opt-prometheus
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.debezium.image.repository }}:{{ .Values.debezium.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.debezium.image.pullPolicy }}
+        livenessProbe:
+          exec:
+            command: ["/bin/sh", "-c", "! curl 127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/status 2>/dev/null | grep -q  '\"state\":\"FAILED\"'"]
+          initialDelaySeconds: 30
+          periodSeconds: 3
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", 'sleep 60s; curl -XPUT -H"Accept:application/json" -H"Content-Type:application/json" http://127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/config -d@/etc/debezium/connector.json']
+        volumeMounts:
+        - mountPath: /etc/debezium/connector.json
+          name: config
+          subPath: connector.json
+        - mountPath: /etc/jmx_exporter/jmx_exporter.yaml
+          name: config
+          subPath: jmx_exporter.yaml
+        - mountPath: /health.sh
+          name: config
+          subPath: health.sh
+        - mountPath: /opt/prometheus
+          name: opt-prometheus
+        - mountPath: /kafka/config/log4j.properties
+          name: config
+          subPath: log4j.properties
+        resources:
+          {{- toYaml .Values.debezium.resources | nindent 12 }}
+        env:
+        {{- range $key, $value := .Values.debezium.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: CONFIG_STORAGE_TOPIC
+          value: {{ include "debezium.ConfigStorageTopic" . }}
+        - name: OFFSET_STORAGE_TOPIC
+          value: {{ include "debezium.OffsetStorageTopic" . }}
+        - name: STATUS_STORAGE_TOPIC
+          value: {{ include "debezium.StatusStorageTopic" . }}
+        - name: EXTRA_ARGS
+          value: -javaagent:/opt/prometheus/jmx_exporter_javaagent.jar={{ .Values.init_jmx.port }}:/etc/jmx_exporter/jmx_exporter.yaml

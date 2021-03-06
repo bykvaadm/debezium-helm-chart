@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "debezium.fullname" . }}
+  labels:
+    {{- include "debezium.labels" . | nindent 4 }}
+data:
+  log4j.properties: |
+    log4j.rootLogger=WARN, stdout
+    log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+    log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+    log4j.appender.stdout.layout.ConversionPattern=[%d] %p %m (%c:%L)%n
+  connector.json: |-
+    {{- .Values.debezium.connector.config | toPrettyJson | nindent 4 }}
+  jmx_exporter.yaml: |-
+    startDelaySeconds: 0
+    ssl: false
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+    - pattern : "kafka.connect<type=connect-worker-metrics>([^:]+):"
+      name: "kafka_connect_connect_worker_metrics_$1"
+    - pattern : "kafka.connect<type=connect-metrics, client-id=([^:]+)><>([^:]+)"
+      name: "kafka_connect_connect_metrics_$2"
+      labels:
+        client: "$1"
+    - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+), key=([^>]+)><>RowsScanned"
+      name: "debezium_metrics_rows_scanned"
+      labels:
+        plugin: "$1"
+        name: "$3"
+        context: "$2"
+        table: "$4"
+    - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^>]+)>([^:]+)"
+      name: "debezium_metrics_$4"
+      labels:
+        plugin: "$1"
+        name: "$3"
+        context: "$2"
+  kafka.sh: |-
+    #!/bin/sh
+    CONSUME_TOPICS=$(jq '."table.include.list"' /opt/debezium/connector.json | tr ',' ' ' | tr -d '"' )
+    BOOTSTRAP_SERVERS=$(jq '."database.history.kafka.bootstrap.servers"' /opt/debezium/connector.json | tr -d '"')
+
+    for topic in ${HISTORY_STORAGE_TOPIC} ${SCHEMA_STORAGE_TOPIC}; do
+    echo -e "\ncreating $topic..."
+    /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --create --partitions 1 \
+    --replication-factor 3 \
+    --config retention.ms=-1 \
+    --config min.insync.replicas=1 \
+    --if-not-exists --topic "${topic}"; echo; done
+
+    for topic in ${CONFIG_STORAGE_TOPIC} ${OFFSET_STORAGE_TOPIC} ${STATUS_STORAGE_TOPIC}; do
+    echo -e "\ncreating $topic..."
+    /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --create --partitions 1 \
+    --replication-factor 3 \
+    --config retention.ms=-1 \
+    --config min.insync.replicas=1 \
+    --config cleanup.policy=compact \
+    --if-not-exists --topic "${topic}"; done
+
+    for topic in ${CONSUME_TOPICS}; do
+    echo -e "\ncreating $topic..."
+    /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --create --partitions 2 \
+    --replication-factor 2 \
+    --config retention.ms=10800000 \
+    --config min.insync.replicas=2 \
+    --if-not-exists --topic debezium.${topic}; done
+
+    echo done

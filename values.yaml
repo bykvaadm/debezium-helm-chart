@@ -1,0 +1,87 @@
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+debezium:
+  replicaCount: 1
+  image:
+    repository: debezium/connect
+    pullPolicy: IfNotPresent
+    tag: "1.4"
+
+  resources: { }
+    # limits:
+    #   cpu: 4
+    #   memory: 2048Mi
+    # requests:
+    #   cpu: 1
+    #   memory: 1256Mi
+
+  env:
+    REST_PORT: 8083
+    CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+    CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    CONNECT_listeners: http://0.0.0.0:8083
+    KAFKA_OPTS: "-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.port=5000 -Dcom.sun.management.jmxremote.rmi.port=5000 -Djava.rmi.server.hostname=127.0.0.1"
+    KAFKA_JVM_PERFORMANCE_OPTS: "-server -XX:+UseG1GC -XX:MetaspaceSize=96m -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80 -XX:MaxInlineLevel=15 -Djava.awt.headless=true"
+    HEAP_OPTS: "-Xms1G -Xmx1G"
+    GROUP_ID: "i.e. 1010, MUST BE CHANGED FOR EVERY CONNECTOR"
+    BOOTSTRAP_SERVERS: &BOOTSTRAP_SERVERS "xxx:9092,yyy:9092,zzz:9092" # MUST BE CHANGED ACCORDING TO YOUR KAFKA SERVERS
+    HISTORY_STORAGE_TOPIC: &HISTORY_STORAGE_TOPIC "MUST BE CHANGED"
+    SCHEMA_STORAGE_TOPIC: &SCHEMA_STORAGE_TOPIC "MUST BE CHANGED"
+
+  connector:
+    name: "MUST BE CHANGED"
+    # example debezium config. change fields according to your needs. Do not remove YAML anchors
+    config:
+      connector.class: "io.debezium.connector.mysql.MySqlConnector"
+      database.history.kafka.bootstrap.servers: *BOOTSTRAP_SERVERS
+      database.history.kafka.recovery.poll.interval.ms: 1000
+      database.history.kafka.topic: *HISTORY_STORAGE_TOPIC
+      database.history.skip.unparseable.ddl: "true"
+      database.hostname: "MUST BE CHANGED"
+      database.include.list: "i.e. DB, MUST BE CHANGED"
+      database.password: "MUST BE CHANGED"
+      database.port: "3306"
+      database.server.id: "i.e. 5006, MUST BE DIFFERENT FOR EVERY CONNECTOR"
+      database.server.name: *SCHEMA_STORAGE_TOPIC
+      database.serverTimezone: "Europe/Moscow"
+      database.user: "MUST BE CHANGED"
+      decimal.handling.mode: "double"
+      max.batch.size: 4096
+      max.queue.size: 16384
+      poll.interval.ms: 1000
+      snapshot.locking.mode: "none"
+      snapshot.mode: "when_needed"
+      snapshot.new.tables: "parallel"
+      table.include.list: "i.e. DB.TABLE_1,DB.TABLE_2, MUST BE CHANGED"
+      tasks.max: "1"
+      transforms.Reroute.topic.regex: "debezium.DB.TABLE.schema.DB.(.+)"
+      transforms.Reroute.topic.replacement: "debezium.DB.$1"
+      transforms.Reroute.type: "io.debezium.transforms.ByLogicalTableRouter"
+      transforms.unwrap.add.fields: "op,source.ts_ms"
+      transforms.unwrap.delete.handling.mode: "rewrite"
+      transforms.unwrap.type: "io.debezium.transforms.ExtractNewRecordState"
+      transforms: "unwrap,Reroute"
+
+init_kafka:
+  image:
+    repository: wurstmeister/kafka
+    tag: "latest"
+
+init_jmx:
+  image:
+    repository: busybox
+    tag: "latest"
+  version: "0.15.0"
+  port: 9005
+
+podSecurityContext: {}
+  # fsGroup: 2000
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000

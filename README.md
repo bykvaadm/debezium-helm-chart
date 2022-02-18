@@ -98,3 +98,81 @@ deploy_helm:
 
 We have a grafana dashboard (much more normal than official which was lat updated 2 years ago), but it is still not ready
 for production. As soon it will be ready we will publish it on grafana.com and put link here.
+
+## Example
+
+#### MySQL
+
+```yaml
+debezium:
+  properties:
+    group_id: 1020
+    topics_basename: debezium.datname.cars
+  connector:
+    name: cars
+    config:
+      connector.class: io.debezium.connector.mysql.MySqlConnector
+      database.history: io.debezium.relational.history.MemoryDatabaseHistory
+      database.hostname: <db.hostname>>
+      database.port: 3306
+      database.user: debezium
+      database.password: <pass>
+      database.include.list: datname
+      database.server.id: 5020
+      database.server.name: debezium.datname.cars.schema
+      database.serverTimezone: Europe/Moscow
+      decimal.handling.mode: double
+      max.batch.size: 4096
+      max.queue.size: 16384
+      poll.interval.ms: 1000
+      snapshot.locking.mode: none
+      snapshot.mode: schema_only
+      snapshot.new.tables: parallel
+      table.include.list: datname.cars,datname.car_model,datname.car_classes,datname.colors
+      tasks.max: 1
+      transforms.Reroute.topic.regex: debezium.datname.cars.schema.datname.(.+)
+      transforms.Reroute.topic.replacement: debezium.datname.$1
+      transforms.Reroute.type: io.debezium.transforms.ByLogicalTableRouter
+      transforms.unwrap.add.fields: op,source.ts_ms
+      transforms.unwrap.delete.handling.mode: rewrite
+      transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+      transforms: unwrap,Reroute
+```
+
+#### PgSQL
+
+```yaml
+debezium:
+  image: debezium/connect:1.7.1.Final
+  properties:
+    group_id: 2210
+    topics_basename: debezium.datname.admin
+  connector:
+    name: citydrive-admin
+    config:
+      connector.class: io.debezium.connector.postgresql.PostgresConnector
+      database.history: io.debezium.relational.history.MemoryDatabaseHistory
+      plugin.name: wal2json
+      publication.name: dbz_publication
+      database.hostname: hostname
+      database.port: 5432
+      database.user: user
+      database.password: password
+      database.dbname: datname
+      database.server.id: 6210
+      database.server.name: debezium.datname.admin.schema
+      tasks.max: 1
+      max.batch.size: 4096
+      max.queue.size: 16384
+      poll.interval.ms: 1000
+      slot.name: dbz_control_room_slot
+      snapshot.mode: never
+      table.include.list: public.action,public.issue,public.task
+      transforms.Reroute.topic.regex: debezium.datname.admin.schema.public.(.+)
+      transforms.Reroute.topic.replacement: debezium.datname.public.$1
+      transforms.Reroute.type: io.debezium.transforms.ByLogicalTableRouter
+      transforms.unwrap.add.fields: op,source.ts_ms
+      transforms.unwrap.delete.handling.mode: rewrite
+      transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+      transforms: unwrap,Reroute
+```

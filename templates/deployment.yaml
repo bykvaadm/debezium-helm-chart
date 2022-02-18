@@ -1,7 +1,8 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "debezium.fullname" . }}
+  name: {{ include "debezium.name" . }}
   labels:
     {{- include "debezium.labels" . | nindent 4 }}
 spec:
@@ -15,99 +16,105 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ toJson .Values | sha256sum }}
-        prometheus.io/scrape: 'true'
-        prometheus.io/path: '/'
-        prometheus.io/port: "{{ .Values.init_jmx.port }}"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9071"
       labels:
         {{- include "debezium.selectorLabels" . | nindent 8 }}
     spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       automountServiceAccountToken: false
-      securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      imagePullSecrets:
+      - name: gitlab-docker-registry
       volumes:
-      - emptyDir: {}
-        name: opt-prometheus
+      - name: opt-prometheus
+        emptyDir: {}
+      - name: secrets
+        secret:
+          secretName: {{ include "debezium.name" . }}
+          defaultMode: 0744
       - name: config
         configMap:
-          name: {{ include "debezium.fullname" . }}
+          name: {{ include "debezium.name" . }}
           defaultMode: 0744
       initContainers:
-      - name: "{{ .Chart.Name }}-kafka"
-        image: "{{ .Values.init_kafka.image.repository }}:{{ .Values.init_kafka.image.tag }}"
+      - name: ensure-kafka-topics
+        image: wurstmeister/kafka:2.13-2.7.0
         volumeMounts:
-        - mountPath: /opt/debezium
-          name: config
-        command: ["/bin/sh", "-c", "/opt/debezium/kafka.sh"]
+        - name: secrets
+          mountPath: /etc/kafka
+        - name: config
+          mountPath: /opt/debezium/kafka.sh
+          subPath: kafka.sh
+        - name: config
+          mountPath: /etc/debezium/connector.json
+          subPath: connector.json
+        - name: config
+          mountPath: /kafka/config/log4j.properties
+          subPath: log4j.properties
+        - name: config
+          mountPath: /kafka/config/admin.properties
+          subPath: admin.properties
         env:
-        {{- range $key, $value := .Values.debezium.env }}
-        - name: {{ $key }}
-          value: {{ $value | quote }}
-        {{- end }}
-        - name: CONFIG_STORAGE_TOPIC
-          value: {{ include "debezium.ConfigStorageTopic" . }}
-        - name: OFFSET_STORAGE_TOPIC
-          value: {{ include "debezium.OffsetStorageTopic" . }}
-        - name: STATUS_STORAGE_TOPIC
-          value: {{ include "debezium.StatusStorageTopic" . }}
-      - name: "{{ .Chart.Name }}-jmx"
-        command:
-        - wget
-        - --quiet
-        - --no-check-certificate
-        - --output-document
-        - /opt/prometheus/jmx_exporter_javaagent.jar
-        - https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/{{ .Values.init_jmx.version }}/jmx_prometheus_javaagent-{{ .Values.init_jmx.version }}.jar
-        image: "{{ .Values.init_jmx.image.repository }}:{{ .Values.init_jmx.image.tag }}"
-        imagePullPolicy: Always
+        - name: KAFKA_OPTS
+          value: -Djava.security.auth.login.config=/etc/kafka/jaas.conf
+        - name: KAFKA_HEAP_OPTS
+          value: -Xms256m -Xmx256m
+        - name: KAFKA_LOG4J_OPTS
+          value: -Dlog4j.configuration=file:/kafka/config/log4j.properties
+        command: ['/bin/sh', '-c', '/opt/debezium/kafka.sh']
+      - name: jmx-install
+        image: busybox:latest
         volumeMounts:
-        - mountPath: /opt/prometheus
-          name: opt-prometheus
+        - name: opt-prometheus
+          mountPath: /opt/prometheus
+        command: ['wget', '--quiet', '--no-check-certificate', '--output-document', '/opt/prometheus/jmx_exporter_javaagent.jar', 'https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.15.0/jmx_prometheus_javaagent-0.15.0.jar']
       containers:
-      - name: {{ .Chart.Name }}
+      - name: connector
+        image: {{ .Values.debezium.image }}
         securityContext:
-          {{- toYaml .Values.securityContext | nindent 12 }}
-        image: "{{ .Values.debezium.image.repository }}:{{ .Values.debezium.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.debezium.image.pullPolicy }}
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: secrets
+          mountPath: /etc/kafka
+        - name: config
+          mountPath: /etc/debezium/connector.json
+          subPath: connector.json
+        - name: config
+          mountPath: /etc/prometheus/jmx_exporter.yml
+          subPath: jmx_exporter.yml
+        - name: config
+          mountPath: /health.sh
+          subPath: health.sh
+        - name: config
+          mountPath: /kafka/config/log4j.properties
+          subPath: log4j.properties
+        - name: config
+          mountPath: /kafka/config/connect-distributed.properties
+          subPath: connect-distributed.properties
+        - name: opt-prometheus
+          mountPath: /opt/prometheus
+        env:
+        - name: KAFKA_OPTS
+          value: -Djava.security.auth.login.config=/etc/kafka/jaas.conf -javaagent:/opt/prometheus/jmx_exporter_javaagent.jar=9071:/etc/prometheus/jmx_exporter.yml
+        - name: KAFKA_HEAP_OPTS
+          value: {{ .Values.kafka_heap_opts }}
+        - name: KAFKA_JVM_PERFORMANCE_OPTS
+          value: {{ .Values.kafka_jvm_performance_opts }}
+        - name: KAFKA_LOG4J_OPTS
+          value: -Dlog4j.configuration=file:/kafka/config/log4j.properties
+        command: ['/kafka/bin/connect-distributed.sh', '/kafka/config/connect-distributed.properties']
         livenessProbe:
           exec:
-            command: ["/bin/sh", "-c", "! curl 127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/status 2>/dev/null | grep -q  '\"state\":\"FAILED\"'"]
-          initialDelaySeconds: 30
+            command: ['/bin/sh', '-c', '! curl 127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/status 2>/dev/null | grep -q  "state":"FAILED" && if [ "$(curl 127.0.0.1:9071 2>/dev/null | grep debezium | wc -l)" -lt "10" ]; then exit 1; else exit 0; fi']
+          initialDelaySeconds: 90
           periodSeconds: 3
         lifecycle:
           postStart:
             exec:
-              command: ["/bin/sh", "-c", 'sleep 60s; curl -XPUT -H"Accept:application/json" -H"Content-Type:application/json" http://127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/config -d@/etc/debezium/connector.json']
-        volumeMounts:
-        - mountPath: /etc/debezium/connector.json
-          name: config
-          subPath: connector.json
-        - mountPath: /etc/jmx_exporter/jmx_exporter.yaml
-          name: config
-          subPath: jmx_exporter.yaml
-        - mountPath: /health.sh
-          name: config
-          subPath: health.sh
-        - mountPath: /opt/prometheus
-          name: opt-prometheus
-        - mountPath: /kafka/config/log4j.properties
-          name: config
-          subPath: log4j.properties
+              command: ['/bin/sh', '-c', 'sleep 60; curl --request PUT --header "Accept:application/json" --header "Content-Type:application/json" "http://127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/config" --data "@/etc/debezium/connector.json"']
         resources:
-          {{- toYaml .Values.debezium.resources | nindent 12 }}
-        env:
-        {{- range $key, $value := .Values.debezium.env }}
-        - name: {{ $key }}
-          value: {{ $value | quote }}
-        {{- end }}
-        - name: CONFIG_STORAGE_TOPIC
-          value: {{ include "debezium.ConfigStorageTopic" . }}
-        - name: OFFSET_STORAGE_TOPIC
-          value: {{ include "debezium.OffsetStorageTopic" . }}
-        - name: STATUS_STORAGE_TOPIC
-          value: {{ include "debezium.StatusStorageTopic" . }}
-        - name: EXTRA_ARGS
-          value: -javaagent:/opt/prometheus/jmx_exporter_javaagent.jar={{ .Values.init_jmx.port }}:/etc/jmx_exporter/jmx_exporter.yaml
+          requests:
+            cpu: 0.1
+            memory: 256Mi
+          limits:
+            cpu: 1

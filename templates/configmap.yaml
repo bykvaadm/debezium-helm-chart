@@ -1,18 +1,19 @@
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "debezium.fullname" . }}
+  name: {{ include "debezium.name" . }}
   labels:
     {{- include "debezium.labels" . | nindent 4 }}
 data:
   log4j.properties: |
-    log4j.rootLogger=WARN, stdout
+    log4j.rootLogger={{ .Values.log_level }}, stdout
     log4j.appender.stdout=org.apache.log4j.ConsoleAppender
     log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
     log4j.appender.stdout.layout.ConversionPattern=[%d] %p %m (%c:%L)%n
   connector.json: |-
     {{- .Values.debezium.connector.config | toPrettyJson | nindent 4 }}
-  jmx_exporter.yaml: |-
+  jmx_exporter.yml: |
     startDelaySeconds: 0
     ssl: false
     lowercaseOutputName: true
@@ -37,40 +38,85 @@ data:
         plugin: "$1"
         name: "$3"
         context: "$2"
-  kafka.sh: |-
+  admin.properties: |
+    security.protocol=SASL_SSL
+    sasl.mechanism=PLAIN
+    ssl.truststore.location=/etc/kafka/truststore.jks
+    ssl.truststore.password=123456
+  kafka.sh: |
     #!/bin/sh
-    CONSUME_TOPICS=$(jq '."table.include.list"' /opt/debezium/connector.json | tr ',' ' ' | tr -d '"' )
-    BOOTSTRAP_SERVERS=$(jq '."database.history.kafka.bootstrap.servers"' /opt/debezium/connector.json | tr -d '"')
-
-    for topic in ${HISTORY_STORAGE_TOPIC} ${SCHEMA_STORAGE_TOPIC}; do
-    echo -e "\ncreating $topic..."
+    set -e
+    KAFKA_BOOTSTRAP_SERVERS={{ .Values.kafka.bootstrap_servers }}
+    PRODUCE_TOPICS=$(jq '."table.include.list"' /etc/debezium/connector.json | tr ',' ' ' | tr -d '"')
     /opt/kafka/bin/kafka-topics.sh \
-    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --command-config /kafka/config/admin.properties \
+    --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
     --create --partitions 1 \
     --replication-factor 3 \
     --config retention.ms=-1 \
     --config min.insync.replicas=1 \
-    --if-not-exists --topic "${topic}"; echo; done
-
-    for topic in ${CONFIG_STORAGE_TOPIC} ${OFFSET_STORAGE_TOPIC} ${STATUS_STORAGE_TOPIC}; do
-    echo -e "\ncreating $topic..."
+    --if-not-exists --topic {{ .Values.debezium.properties.topics_basename }}.schema
+    for s in config offset status; do
     /opt/kafka/bin/kafka-topics.sh \
-    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --command-config /kafka/config/admin.properties \
+    --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
     --create --partitions 1 \
     --replication-factor 3 \
     --config retention.ms=-1 \
     --config min.insync.replicas=1 \
     --config cleanup.policy=compact \
-    --if-not-exists --topic "${topic}"; done
-
-    for topic in ${CONSUME_TOPICS}; do
-    echo -e "\ncreating $topic..."
+    --if-not-exists --topic {{ .Values.debezium.properties.topics_basename }}.$s; done
+    topic_prefix="debezium"
+    if [ $(jq '."database.dbname"' /etc/debezium/connector.json) != "null" ]; then topic_prefix=debezium.$(jq '."database.dbname"' /etc/debezium/connector.json | tr -d '"'); fi
+    for topic in ${PRODUCE_TOPICS}; do
     /opt/kafka/bin/kafka-topics.sh \
-    --bootstrap-server ${BOOTSTRAP_SERVERS} \
+    --command-config /kafka/config/admin.properties \
+    --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
     --create --partitions 2 \
     --replication-factor 2 \
-    --config retention.ms=10800000 \
+    --config retention.ms=259200000 \
     --config min.insync.replicas=2 \
-    --if-not-exists --topic debezium.${topic}; done
+    --if-not-exists --topic ${topic_prefix}.${topic}; done
+  connect-distributed.properties: |
+    group.id={{ .Values.debezium.properties.group_id }}
 
-    echo done
+    listeners=http://0.0.0.0:8083
+
+    task.shutdown.graceful.timeout.ms=10000
+
+    plugin.path=/kafka/connect
+
+    key.converter=org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable=false
+    value.converter=org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable=false
+    internal.key.converter=org.apache.kafka.connect.json.JsonConverter
+    internal.value.converter=org.apache.kafka.connect.json.JsonConverter
+
+    offset.storage.topic={{ .Values.debezium.properties.topics_basename }}.offset
+    offset.storage.replication.factor=1
+    offset.flush.interval.ms=60000
+    offset.flush.timeout.ms=5000
+
+    config.storage.topic={{ .Values.debezium.properties.topics_basename }}.config
+    config.storage.replication.factor=1
+
+    status.storage.topic={{ .Values.debezium.properties.topics_basename }}.status
+    status.storage.replication.factor=1
+
+    bootstrap.servers={{ .Values.kafka.bootstrap_servers }}
+
+    security.protocol=SASL_SSL
+    sasl.mechanism=PLAIN
+    ssl.truststore.location=/etc/kafka/truststore.jks
+    ssl.truststore.password=123456
+
+    producer.security.protocol=SASL_SSL
+    producer.sasl.mechanism=PLAIN
+    producer.ssl.truststore.location=/etc/kafka/truststore.jks
+    producer.ssl.truststore.password=123456
+
+    consumer.security.protocol=SASL_SSL
+    consumer.sasl.mechanism=PLAIN
+    consumer.ssl.truststore.location=/etc/kafka/truststore.jks
+    consumer.ssl.truststore.password=123456

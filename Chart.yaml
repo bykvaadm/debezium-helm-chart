@@ -1,6 +1,6 @@
 apiVersion: v2
 name: debezium
-description: A Helm chart for Kubernetes
+description: Debezium Helm chart
 type: application
-version: 0.6.0
-appVersion: "1.4"
+version: 1.0.1
+appVersion: 1.7.1.Final

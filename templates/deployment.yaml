@@ -36,31 +36,6 @@ spec:
           name: {{ include "debezium.name" . }}
           defaultMode: 0744
       initContainers:
-      - name: ensure-kafka-topics
-        image: wurstmeister/kafka:2.13-2.7.0
-        volumeMounts:
-        - name: secrets
-          mountPath: /etc/kafka
-        - name: config
-          mountPath: /opt/debezium/kafka.sh
-          subPath: kafka.sh
-        - name: config
-          mountPath: /etc/debezium/connector.json
-          subPath: connector.json
-        - name: config
-          mountPath: /kafka/config/log4j.properties
-          subPath: log4j.properties
-        - name: config
-          mountPath: /kafka/config/admin.properties
-          subPath: admin.properties
-        env:
-        - name: KAFKA_OPTS
-          value: -Djava.security.auth.login.config=/etc/kafka/jaas.conf
-        - name: KAFKA_HEAP_OPTS
-          value: -Xms256m -Xmx256m
-        - name: KAFKA_LOG4J_OPTS
-          value: -Dlog4j.configuration=file:/kafka/config/log4j.properties
-        command: ['/bin/sh', '-c', '/opt/debezium/kafka.sh']
       - name: jmx-install
         image: busybox:latest
         volumeMounts:
@@ -94,6 +69,18 @@ spec:
         - name: opt-prometheus
           mountPath: /opt/prometheus
         env:
+        - name: CONNECT_SECURITY_PROTOCOL
+          value: {{ .Values.kafka.security_protocol }}
+        - name: CONNECT_CONSUMER_SECURITY_PROTOCOL
+          value: {{ .Values.kafka.security_protocol }}
+        - name: CONNECT_PRODUCER_SECURITY_PROTOCOL
+          value: {{ .Values.kafka.security_protocol }}
+        - name: CONNECT_SASL_MECHANISM
+          value: {{ .Values.kafka.sasl_mechanism }}
+        - name: CONNECT_CONSUMER_SASL_MECHANISM
+          value: {{ .Values.kafka.sasl_mechanism }}
+        - name: CONNECT_PRODUCER_SASL_MECHANISM
+          value: {{ .Values.kafka.sasl_mechanism }}
         - name: KAFKA_OPTS
           value: -Djava.security.auth.login.config=/etc/kafka/jaas.conf -javaagent:/opt/prometheus/jmx_exporter_javaagent.jar=9071:/etc/prometheus/jmx_exporter.yml
         - name: KAFKA_HEAP_OPTS
@@ -103,15 +90,15 @@ spec:
         - name: KAFKA_LOG4J_OPTS
           value: -Dlog4j.configuration=file:/kafka/config/log4j.properties
         command: ['/kafka/bin/connect-distributed.sh', '/kafka/config/connect-distributed.properties']
-        livenessProbe:
-          exec:
-            command: ['/bin/sh', '-c', '! curl 127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/status 2>/dev/null | grep -q  "state":"FAILED" && if [ "$(curl 127.0.0.1:9071 2>/dev/null | grep debezium | wc -l)" -lt "10" ]; then exit 1; else exit 0; fi']
-          initialDelaySeconds: 90
-          periodSeconds: 3
-        lifecycle:
-          postStart:
-            exec:
-              command: ['/bin/sh', '-c', 'sleep 60; curl --request PUT --header "Accept:application/json" --header "Content-Type:application/json" "http://127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/config" --data "@/etc/debezium/connector.json"']
+        #livenessProbe:
+          # exec:
+          #  command: ['/bin/sh', '-c', '! curl 127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/status 2>/dev/null | grep -q  "state":"FAILED" && if [ "$(curl 127.0.0.1:9071 2>/dev/null | grep debezium | wc -l)" -lt "10" ]; then exit 1; else exit 0; fi']
+        #  initialDelaySeconds: 90
+        #  periodSeconds: 3
+        #lifecycle:
+        #  postStart:
+        #    exec:
+        #      command: ['/bin/sh', '-c', 'sleep 60; curl --request PUT --header "Accept:application/json" --header "Content-Type:application/json" "http://127.0.0.1:8083/connectors/{{ .Values.debezium.connector.name }}/config" --data "@/etc/debezium/connector.json"']
         resources:
           requests:
             cpu: 0.1

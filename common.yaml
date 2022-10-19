@@ -1,0 +1,18 @@
+debezium:
+  name: debezium
+  image: debezium/connect:1.9.5.Final
+  properties:
+    group_id: mongodb-connect
+    topics_basename: debezium-cn
+
+kafka:
+  ssl_enabled: True
+  bootstrap_servers: "dev.kafka.service.consul.qa:9092"
+  security_protocol: "SASL_PLAINTEXT"
+  sasl_mechanism: "SCRAM-SHA-512"
+#   KafkaClient {
+#    org.apache.kafka.common.security.scram.ScramLoginModule required
+#    username="stage"
+#    password="stagekafka";
+# };
+  jaas_conf: "S2Fma2FDbGllbnQgewogICBvcmcuYXBhY2hlLmthZmthLmNvbW1vbi5zZWN1cml0eS5zY3JhbS5TY3JhbUxvZ2luTW9kdWxlIHJlcXVpcmVkCiAgIHVzZXJuYW1lPSJzdGFnZSIKICAgcGFzc3dvcmQ9InN0YWdla2Fma2EiOwp9Ow=="

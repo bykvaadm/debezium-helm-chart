@@ -39,10 +39,8 @@ data:
         name: "$3"
         context: "$2"
   admin.properties: |
-    security.protocol=SASL_SSL
-    sasl.mechanism=PLAIN
-    ssl.truststore.location=/etc/kafka/truststore.jks
-    ssl.truststore.password=123456
+    security.protocol=SASL_PLAINTEXT
+    sasl.mechanism=SCRAM-SHA-512
   kafka.sh: |
     #!/bin/sh
     set -e
@@ -106,17 +104,11 @@ data:
 
     bootstrap.servers={{ .Values.kafka.bootstrap_servers }}
 
-    security.protocol=SASL_SSL
-    sasl.mechanism=PLAIN
-    ssl.truststore.location=/etc/kafka/truststore.jks
-    ssl.truststore.password=123456
+    security.protocol=SASL_PLAINTEXT
+    sasl.mechanism=SCRAM-SHA-512
 
-    producer.security.protocol=SASL_SSL
-    producer.sasl.mechanism=PLAIN
-    producer.ssl.truststore.location=/etc/kafka/truststore.jks
-    producer.ssl.truststore.password=123456
+    producer.security.protocol=SASL_PLAINTEXT
+    producer.sasl.mechanism=SCRAM-SHA-512
 
-    consumer.security.protocol=SASL_SSL
-    consumer.sasl.mechanism=PLAIN
-    consumer.ssl.truststore.location=/etc/kafka/truststore.jks
-    consumer.ssl.truststore.password=123456
+    consumer.security.protocol=SASL_PLAINTEXT
+    consumer.sasl.mechanism=SCRAM-SHA-512
